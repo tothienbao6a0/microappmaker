@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings - AppGenius</title>
+  <link rel="stylesheet" href="/index.css">
+</head>
+<body>
+  <div id="settings-root"></div>
+  <script>
+    // Render the Settings component
+    document.addEventListener('DOMContentLoaded', function() {
+      // Check if the main app script is loaded
+      if (window.renderSettings) {
+        window.renderSettings();
+      } else {
+        // If not, load it
+        const script = document.createElement('script');
+        script.src = '/index.js';
+        script.onload = function() {
+          if (window.renderSettings) {
+            window.renderSettings();
+          }
+        };
+        document.body.appendChild(script);
+      }
+    });
+  </script>
+</body>
+</html> 
