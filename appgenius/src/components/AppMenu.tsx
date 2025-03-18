@@ -1,17 +1,97 @@
 import React, { useState } from 'react';
 import { useAppStore, MicroApp } from '@/store/appStore';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Plus, Edit2, Check, Trash2, AppWindow } from 'lucide-react';
+import { ArrowLeft, Plus, Edit2, Check, Trash2, AppWindow, Settings, Search } from 'lucide-react';
 import { Button } from './ui/button';
 import AppIcon from './AppIcon';
+import { Input } from './ui/input';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import Link from "next/link"
+import { useTheme } from "next-themes"
+import { MoonIcon, SunIcon } from 'lucide-react';
 
 const AppMenu: React.FC = () => {
-  const { microApps, setCurrentScreen, toggleChat } = useAppStore();
+  const { microApps, setCurrentScreen, toggleChat, addWidget, addMicroApp } = useAppStore();
   const [isEditMode, setIsEditMode] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const { setTheme } = useTheme()
   
   const toggleEditMode = () => {
     setIsEditMode(!isEditMode);
+  };
+  
+  // Filter apps based on search query
+  const filteredApps = microApps
+    .filter(app => app && app.name && app.description) // Ensure app is valid
+    .filter(app => 
+      app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      app.description.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  
+  // Handle creating a new app
+  const handleCreateApp = () => {
+    // Open the AI chat to create a new app
+    setCurrentScreen('dashboard');
+    toggleChat();
+  };
+  
+  // Navigate to settings - use Next.js routing
+  const handleOpenSettings = () => {
+    console.log('Navigating to settings from AppMenu');
+    window.location.href = '/settings';
+  };
+  
+  // Update the handleAppClick function with a more reliable approach
+  const handleAppClick = (app: MicroApp) => {
+    console.log('App clicked:', app.name);
+    
+    try {
+      // Generate a unique ID for the widget
+      const widgetId = `widget-${Date.now()}`;
+      
+      // First add the app if it doesn't exist
+      const existingApp = microApps.find(a => a.id === app.id);
+      if (!existingApp) {
+        addMicroApp(app);
+      }
+      
+      // Add the widget to the store with a name
+      addWidget({
+        id: widgetId,
+        appId: app.id,
+        name: app.name, // Make sure to include the name
+        position: { x: 0, y: 0 },
+        size: 'medium'
+      });
+      
+      console.log('Widget added:', widgetId);
+      
+      // Force a layout update in localStorage
+      const newLayoutItem = {
+        i: widgetId,
+        x: 0,
+        y: 0,
+        w: 6, // medium size
+        h: 3,
+      };
+      
+      // Get existing layout from localStorage or create empty array
+      const existingLayout = JSON.parse(localStorage.getItem('dashboard-layout') || '[]');
+      const newLayout = [newLayoutItem, ...existingLayout];
+      localStorage.setItem('dashboard-layout', JSON.stringify(newLayout));
+      
+      // Navigate to the dashboard
+      setCurrentScreen('dashboard');
+    } catch (error) {
+      console.error('Error adding widget:', error);
+      alert('Error adding widget: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
   };
   
   return (
@@ -49,6 +129,32 @@ const AppMenu: React.FC = () => {
               </Button>
             )}
             
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="flex items-center gap-1 rounded-full px-4">
+                  <Settings size={16} />
+                  <span>Settings</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link href="/settings">
+                    <Settings className="mr-2 h-4 w-4" />
+                    Settings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setTheme("light")}>
+                  Light
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setTheme("dark")}>
+                  Dark
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setTheme("system")}>
+                  System
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            
             <Button
               variant="outline"
               size="sm"
@@ -69,7 +175,7 @@ const AppMenu: React.FC = () => {
             </Button>
             
             <Button
-              onClick={toggleChat}
+              onClick={handleCreateApp}
               size="sm"
               className="flex items-center gap-1 rounded-full px-4 bg-secondary hover:bg-secondary/90"
             >
@@ -96,6 +202,18 @@ const AppMenu: React.FC = () => {
       </header>
       
       <main className="max-w-7xl mx-auto">
+        {/* Search bar */}
+        <div className="relative mb-6">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+          <Input
+            type="text"
+            placeholder="Search apps..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        
         {microApps.length === 0 ? (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
@@ -109,7 +227,7 @@ const AppMenu: React.FC = () => {
               Create your first app by clicking the "Create App" button and describing what you want.
             </p>
             <Button 
-              onClick={toggleChat}
+              onClick={handleCreateApp}
               className="rounded-full px-6 py-2 bg-primary hover:bg-primary/90 shadow-md hover:shadow-lg"
             >
               <Plus size={16} className="mr-2" />
@@ -125,7 +243,7 @@ const AppMenu: React.FC = () => {
             )}
             
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-              {microApps.map((app) => (
+              {filteredApps.map((app) => (
                 <AppIcon key={app.id} app={app} isEditMode={isEditMode} />
               ))}
             </div>

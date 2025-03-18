@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { useAppStore, Widget, MicroApp } from '@/store/appStore';
 import { cn } from '@/lib/utils';
 import { X, GripVertical, Maximize2, Minimize2, Trash2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 interface WidgetContainerProps {
   widget: Widget;
@@ -19,6 +20,7 @@ const WidgetContainer: React.FC<WidgetContainerProps> = ({
 }) => {
   const { removeWidget, resizeWidget } = useAppStore();
   const [isHovered, setIsHovered] = useState(false);
+  const [hasError, setHasError] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   
   // Function to cycle through sizes
@@ -29,46 +31,146 @@ const WidgetContainer: React.FC<WidgetContainerProps> = ({
     resizeWidget(widget.id, sizes[nextIndex]);
   };
   
+  // Reset error state when app changes
+  useEffect(() => {
+    setHasError(false);
+  }, [app.id, app.code]);
+  
+  // Create the widget content with error handling
+  const createWidgetContent = () => {
+    try {
+      // Create a safe wrapper around the app code
+      const safeAppCode = `
+        try {
+          ${app.code}
+          
+          // Render the component with error handling
+          function SafeAppWrapper(props) {
+            try {
+              // First try to find the component name from a function declaration
+              let componentName = null;
+              const functionMatch = /function\\s+([A-Za-z0-9_]+)\\s*\\(/g.exec(props.code);
+              if (functionMatch && functionMatch[1]) {
+                componentName = functionMatch[1];
+              }
+              
+              // If no match, use a default name
+              if (!componentName) {
+                componentName = 'App';
+                // Define a fallback component if needed
+                window.App = function App(props) {
+                  return React.createElement('div', null, 'Component could not be identified');
+                };
+              }
+              
+              // Get the component from the window object
+              const AppComponent = window[componentName];
+              if (typeof AppComponent !== 'function') {
+                throw new Error('Component ' + componentName + ' is not a function');
+              }
+              
+              return React.createElement(AppComponent, { config: props.config });
+            } catch (error) {
+              console.error('Error rendering component:', error);
+              return React.createElement(
+                'div',
+                { style: { padding: '1rem', color: 'red' } },
+                [
+                  React.createElement('h3', { key: 'title' }, 'Error Rendering App'),
+                  React.createElement('p', { key: 'message' }, error.message)
+                ]
+              );
+            }
+          }
+          
+          // Extract component name from the code
+          const componentNameMatch = /function\\s+([A-Za-z0-9_]+)\\s*\\(/g.exec(props.code);
+          const componentName = componentNameMatch ? componentNameMatch[1] : 'App';
+          
+          ReactDOM.render(
+            React.createElement(SafeAppWrapper, { 
+              componentName: componentName,
+              config: ${JSON.stringify(app.config || {})},
+              code: props.code
+            }),
+            document.getElementById('app-root')
+          );
+        } catch (error) {
+          document.getElementById('app-root').innerHTML = 
+            '<div style="padding: 1rem; color: red;">' +
+            '<h3>Error Loading App</h3>' +
+            '<p>' + error.message + '</p>' +
+            '</div>';
+        }
+      `;
+      
+      return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+          <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+          <style>
+            body, html { 
+              margin: 0; 
+              padding: 0; 
+              height: 100%; 
+              font-family: system-ui, -apple-system, sans-serif;
+            }
+            #app-root {
+              height: 100%;
+              overflow: auto;
+            }
+            * {
+              box-sizing: border-box;
+            }
+          </style>
+        </head>
+        <body>
+          <div id="app-root"></div>
+          <script>
+            const props = {
+              code: \`${app.code.replace(/`/g, '\\`')}\`,
+              config: ${JSON.stringify(app.config || {})}
+            };
+            ${safeAppCode}
+          </script>
+        </body>
+        </html>
+      `;
+    } catch (error) {
+      setHasError(true);
+      return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            body { 
+              margin: 0; 
+              padding: 1rem; 
+              font-family: system-ui, -apple-system, sans-serif;
+              color: red;
+            }
+          </style>
+        </head>
+        <body>
+          <h3>Error Creating Widget</h3>
+          <p>${error instanceof Error ? error.message : 'Unknown error'}</p>
+        </body>
+        </html>
+      `;
+    }
+  };
+  
   // Create a blob URL for the widget code
   useEffect(() => {
     if (!iframeRef.current) return;
     
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-          <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-          <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-          <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-          <style>
-            body { margin: 0; padding: 0; overflow: hidden; font-family: system-ui, -apple-system, sans-serif; }
-            #root { width: 100%; height: 100vh; }
-            
-            /* Custom scrollbar */
-            ::-webkit-scrollbar { width: 6px; }
-            ::-webkit-scrollbar-track { background: transparent; }
-            ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
-            ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.3); }
-          </style>
-        </head>
-        <body>
-          <div id="root"></div>
-          <script type="text/babel">
-            ${app.code}
-            
-            // Render the app with its configuration
-            const AppComponent = ${app.name.replace(/\s+/g, '')}; // Convert name to component name
-            ReactDOM.render(
-              <AppComponent config={${JSON.stringify(app.config || {})}} />,
-              document.getElementById('root')
-            );
-          </script>
-        </body>
-      </html>
-    `;
+    const html = createWidgetContent();
     
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
@@ -103,86 +205,27 @@ const WidgetContainer: React.FC<WidgetContainerProps> = ({
   };
   
   return (
-    <div 
-      className="flex flex-col w-full h-full"
-      draggable={isEditing}
-      onDragStart={handleDragStart}
-    >
-      {/* Widget title and controls */}
-      <div className="flex items-center justify-between mb-2 px-1">
-        <h3 className="text-sm font-medium text-foreground truncate">{widget.name}</h3>
-        
-        {/* Controls that show on hover */}
-        <div 
-          className={cn(
-            "flex items-center gap-1.5 transition-opacity",
-            isHovered && !isEditing ? "opacity-100" : "opacity-0"
-          )}
-        >
-          {isHovered && !isEditing && (
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                cycleSize();
-              }}
-              className="p-1.5 bg-background border border-border text-muted-foreground hover:text-foreground rounded-full transition-colors shadow-sm"
-              title={`Resize to ${widget.size === 'small' ? 'medium' : widget.size === 'medium' ? 'large' : 'small'}`}
-            >
-              {widget.size === 'small' ? (
-                <Maximize2 size={14} />
-              ) : widget.size === 'large' ? (
-                <Minimize2 size={14} />
-              ) : (
-                <Maximize2 size={14} />
-              )}
-            </button>
-          )}
-        </div>
-      </div>
-      
-      {/* Widget card */}
-      <motion.div
-        className={cn(
-          'relative rounded-xl overflow-hidden bg-card border border-border shadow-sm transition-all hover:shadow-md flex-1',
-          isEditing ? 'cursor-move' : ''
+    <div className="p-4 bg-white shadow-md rounded-lg border border-gray-200">
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="text-lg font-semibold">{app.name}</h3>
+        {isEditing && (
+          <Button
+            onClick={() => onDeleteDrop(widget.id)}
+            className="text-red-500 hover:text-red-700"
+          >
+            Delete
+          </Button>
         )}
-        layout
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        transition={{ duration: 0.2 }}
-        onHoverStart={() => setIsHovered(true)}
-        onHoverEnd={() => setIsHovered(false)}
-      >
-        {/* Widget content */}
+      </div>
+      <div className="text-sm text-gray-600 mb-4">{app.description}</div>
+      <div className="widget-content">
         <iframe
           ref={iframeRef}
+          title={app.name}
           className="w-full h-full border-0"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals"
-          title={widget.name}
-          style={{ pointerEvents: isEditing ? 'none' : 'auto' }}
+          sandbox="allow-scripts allow-same-origin"
         />
-        
-        {/* Edit mode handle for moving widgets */}
-        {isEditing && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/5 cursor-move">
-            <div className="bg-white/30 p-2 rounded-full shadow-md">
-              <GripVertical className="text-white drop-shadow-md" />
-            </div>
-          </div>
-        )}
-      </motion.div>
-      
-      {/* Widget description tooltip */}
-      {isHovered && !isEditing && app.description && (
-        <motion.div 
-          initial={{ opacity: 0, y: 5 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="absolute bottom-2 left-2 right-2 bg-black/70 text-white text-xs p-2 rounded-md backdrop-blur-sm"
-        >
-          {app.description}
-        </motion.div>
-      )}
+      </div>
     </div>
   );
 };

@@ -13,6 +13,7 @@ const Dashboard: React.FC = () => {
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [layout, setLayout] = useState([]);
   
   // Update window width on resize
   useEffect(() => {
@@ -36,52 +37,48 @@ const Dashboard: React.FC = () => {
   const containerWidth = Math.min(windowWidth - 48, 1200); // 48px for padding
   
   // Convert widgets to layout items for react-grid-layout
-  const layout = widgets.map((widget) => {
-    // Get the app to determine appropriate sizing
-    const app = microApps.find(a => a.id === widget.appId);
-    if (!app) return null;
+  useEffect(() => {
+    const initialLayout = widgets.map((widget) => {
+      const app = microApps.find(a => a.id === widget.appId);
+      if (!app) return null;
+      
+      const appType = app.name.toLowerCase();
+      
+      let w = 1; // Default width (1 column)
+      let h = 2; // Default height (2 rows)
+      
+      if (widget.size === 'small') {
+        w = 1;
+        h = 1;
+      } else if (widget.size === 'medium') {
+        w = 2;
+        h = 2;
+      } else if (widget.size === 'large') {
+        w = 3;
+        h = 3;
+      }
+      
+      return {
+        i: widget.id,
+        x: widget.position.x,
+        y: widget.position.y,
+        w,
+        h
+      };
+    }).filter(Boolean);
     
-    const appType = app.name.toLowerCase();
-    
-    // Default sizing based on widget size preference
-    let w = 1; // Default width (1 column)
-    let h = 2; // Default height (2 rows)
-    
-    // Adjust size based on widget size preference
-    if (widget.size === 'small') {
-      w = 1;
-      h = 1;
-    } else if (widget.size === 'medium') {
-      w = cols <= 1 ? 1 : 1;
-      h = 2;
-    } else if (widget.size === 'large') {
-      w = cols <= 1 ? 1 : 2;
-      h = 2;
-    }
-    
-    // Ensure widget fits within available columns
-    w = Math.min(w, cols);
-    
-    return {
-      i: widget.id,
-      x: widget.position.x % cols,
-      y: widget.position.y,
-      w,
-      h,
-      minW: 1,
-      maxW: cols,
-      minH: 1,
-      maxH: 4
-    };
-  });
+    console.log('Initial layout:', initialLayout);
+    setLayout(initialLayout);
+  }, [widgets, microApps]);
   
   // Handle layout change
   const handleLayoutChange = (newLayout: any[]) => {
+    if (!isEditMode) return;
+    
     newLayout.forEach((item) => {
       const widget = widgets.find(w => w.id === item.i);
       if (widget) {
         updateWidget(widget.id, {
-          ...widget,
           position: {
             x: item.x,
             y: item.y
@@ -96,6 +93,68 @@ const Dashboard: React.FC = () => {
     removeWidget(widgetId);
     setIsDraggingOver(false);
   };
+  
+  // Navigate to settings - use Next.js routing
+  const handleOpenSettings = () => {
+    console.log('Navigating to settings from Dashboard');
+    window.location.href = '/settings';
+  };
+  
+  // Add a useEffect to log layout changes
+  useEffect(() => {
+    console.log('Layout updated:', layout);
+    console.log('Widgets:', widgets);
+    
+    // Check if widgets are in the layout
+    const widgetsInLayout = widgets.filter(widget => 
+      layout.some(item => item.i === widget.id)
+    );
+    
+    console.log('Widgets in layout:', widgetsInLayout.length, 'of', widgets.length);
+    
+    // If there are widgets not in the layout, add them
+    const widgetsNotInLayout = widgets.filter(widget => 
+      !layout.some(item => item.i === widget.id)
+    );
+    
+    if (widgetsNotInLayout.length > 0) {
+      console.log('Adding missing widgets to layout:', widgetsNotInLayout.length);
+      
+      // Create layout items for missing widgets
+      const newLayoutItems = widgetsNotInLayout.map((widget, index) => ({
+        i: widget.id,
+        x: 0,
+        y: Infinity, // Place at the bottom
+        w: widget.size === 'small' ? 4 : widget.size === 'medium' ? 6 : 12,
+        h: widget.size === 'small' ? 2 : widget.size === 'medium' ? 3 : 4,
+      }));
+      
+      // Update the layout
+      handleLayoutChange(newLayoutItems);
+    }
+  }, [widgets, layout]);
+  
+  // Force layout to be correct when widgets change
+  useEffect(() => {
+    if (widgets.length > 0) {
+      // Create a fresh layout for all widgets
+      const newLayout = widgets.map((widget, index) => ({
+        i: widget.id,
+        x: 0,
+        y: index * 4, // Stack widgets vertically
+        w: widget.size === 'small' ? 4 : widget.size === 'medium' ? 6 : 12,
+        h: widget.size === 'small' ? 2 : widget.size === 'medium' ? 3 : 4,
+      }));
+      
+      // Update the layout state
+      setLayout(newLayout);
+      
+      // Save to localStorage
+      localStorage.setItem('dashboard-layout', JSON.stringify(newLayout));
+      
+      console.log('Layout reset for all widgets:', newLayout);
+    }
+  }, [widgets.length]); // Only run when the number of widgets changes
   
   return (
     <div className="min-h-screen bg-background">
@@ -127,6 +186,16 @@ const Dashboard: React.FC = () => {
               
               <Button
                 variant="outline"
+                size="sm"
+                onClick={handleOpenSettings}
+                className="flex items-center gap-1 rounded-full px-4 border-primary/20 hover:border-primary/50"
+              >
+                <Settings size={16} />
+                <span>Settings</span>
+              </Button>
+              
+              <Button
+                variant={isEditMode ? "default" : "outline"}
                 size="sm"
                 onClick={toggleEditMode}
                 className="flex items-center gap-1 rounded-full px-4 border-primary/20 hover:border-primary/50"
@@ -194,7 +263,7 @@ const Dashboard: React.FC = () => {
           <div className="max-w-7xl mx-auto">
             <div className="relative">
               <GridLayout
-                className={`layout`}
+                className="layout"
                 layout={layout}
                 cols={cols}
                 rowHeight={150}
@@ -203,19 +272,19 @@ const Dashboard: React.FC = () => {
                 isResizable={false}
                 compactType="vertical"
                 margin={[16, 16]}
-                onLayoutChange={handleLayoutChange}
-                draggableHandle=".cursor-move"
-                onDragStart={() => {
-                  // This is triggered when a widget starts being dragged
-                  // We could use this to show the delete zone more prominently
+                onLayoutChange={(newLayout) => {
+                  console.log('Layout changed:', newLayout);
+                  setLayout(newLayout);
+                  localStorage.setItem('dashboard-layout', JSON.stringify(newLayout));
                 }}
               >
                 {widgets.map((widget) => {
                   const app = microApps.find(a => a.id === widget.appId);
                   if (!app) return null;
                   
+                  console.log('Rendering widget:', widget.id);
                   return (
-                    <div key={widget.id} className="widget-container">
+                    <div key={widget.id} className="widget-container bg-background border-2 border-primary">
                       <WidgetContainer
                         widget={widget}
                         app={app}

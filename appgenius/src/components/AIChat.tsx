@@ -2,7 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { Button } from './ui/button';
-import { X, Send, Loader2, Sparkles, Bot, User } from 'lucide-react';
+import { X, Send, Loader2, Sparkles, Bot, User, Settings as SettingsIcon } from 'lucide-react';
+import generateMicroApp, { hasApiKey } from '@/lib/llmService';
+import { defaultApps } from '@/lib/defaultApps';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -10,15 +12,18 @@ interface Message {
 }
 
 const AIChat: React.FC = () => {
-  const { isChatOpen, toggleChat, addMicroApp } = useAppStore();
+  const { isChatOpen, toggleChat, addMicroApp, addWidget, setCurrentScreen, toggleSettings } = useAppStore();
   const [messages, setMessages] = useState<Message[]>([
     { 
       role: 'assistant', 
-      content: 'Hi! I can help you create custom apps for your dashboard. What would you like to build today?' 
+      content: hasApiKey() 
+        ? 'Hi! I can help you create custom apps for your dashboard. What would you like to build today?' 
+        : 'Hi! I can help you create apps for your dashboard. For full customization, add your OpenAI API key in settings.'
     }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isGeneratingApp, setIsGeneratingApp] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   
@@ -47,47 +52,116 @@ const AIChat: React.FC = () => {
     setIsLoading(true);
     
     try {
-      // In a real implementation, you would call the OpenAI API here
-      // For the MVP, we'll simulate a response
-      
       // Simulate API delay
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Generate a mock app based on the input
-      const appType = input.toLowerCase().includes('weather') 
-        ? 'weather' 
-        : input.toLowerCase().includes('latex') 
-          ? 'latex-generator'
-          : 'url-launcher';
+      // Check if the message is asking to create an app
+      const userInput = input.toLowerCase();
+      const isAppRequest = 
+        userInput.includes('create') || 
+        userInput.includes('make') || 
+        userInput.includes('build') ||
+        userInput.includes('generate') ||
+        userInput.includes('add') ||
+        userInput.includes('weather') ||
+        userInput.includes('calculator') ||
+        userInput.includes('todo') ||
+        userInput.includes('url') ||
+        userInput.includes('notes');
       
-      // Add assistant response
-      setMessages((prev) => [
-        ...prev, 
-        { 
-          role: 'assistant', 
-          content: `I've created a ${appType} microapp based on your request! You can find it in your app library now. You can add it as a widget to your dashboard.` 
+      if (isAppRequest) {
+        // Add initial response
+        setMessages((prev) => [
+          ...prev, 
+          { 
+            role: 'assistant', 
+            content: hasApiKey()
+              ? 'I can create that for you! Let me generate the app...'
+              : 'I can create a basic version for you. For fully custom apps, add your OpenAI API key in settings.'
+          }
+        ]);
+        
+        // Generate the app
+        setIsGeneratingApp(true);
+        
+        try {
+          const newApp = await generateMicroApp(input);
+          
+          // Add the app to the store
+          addMicroApp(newApp);
+          
+          // Add widget
+          addWidget({
+            id: `widget-${newApp.id}`,
+            appId: newApp.id,
+            name: newApp.name,
+            size: 'medium', // or 'small'/'large' based on your preference
+            position: { x: 0, y: 0 } // Initial position
+          });
+          
+          // Add success message
+          setMessages((prev) => [
+            ...prev, 
+            { 
+              role: 'assistant', 
+              content: `I've created "${newApp.name}" and added it to your app library! You can now add it to your dashboard.${
+                !hasApiKey() ? ' For more advanced custom apps, add your OpenAI API key in settings.' : ''
+              }`
+            }
+          ]);
+        } catch (error: any) {
+          console.error('Error generating app:', error);
+          
+          // Add error message
+          setMessages((prev) => [
+            ...prev, 
+            { 
+              role: 'assistant', 
+              content: error.message || 'Sorry, I encountered an error while generating your app. Please try again with a different request.' 
+            }
+          ]);
+        } finally {
+          setIsGeneratingApp(false);
         }
-      ]);
-      
-      // Create a new app based on the type
-      const newApp = {
-        name: `${appType.charAt(0).toUpperCase() + appType.slice(1).replace(/-([a-z])/g, (g) => g[1].toUpperCase())}`,
-        description: `Generated from prompt: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
-        icon: getAppIcon(appType),
-        code: getAppCode(appType),
-        config: getAppConfig(appType, input)
-      };
-      
-      // Add the app to the store
-      addMicroApp(newApp);
-      
+      } else if (userInput.includes('api') && userInput.includes('key')) {
+        // Handle API key related questions
+        setMessages((prev) => [
+          ...prev, 
+          { 
+            role: 'assistant', 
+            content: 'You can add your OpenAI API key in the settings. This will enable fully custom app generation based on your requests.'
+          }
+        ]);
+        
+        // Add a button to open settings
+        setTimeout(() => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: 'Would you like to open settings now to add your API key?'
+            }
+          ]);
+        }, 500);
+      } else {
+        // Generic response for non-app requests
+        setMessages((prev) => [
+          ...prev, 
+          { 
+            role: 'assistant', 
+            content: 'I can help you create custom apps for your dashboard. Try asking me to create a weather widget, calculator, todo list, or URL launcher!' 
+          }
+        ]);
+      }
     } catch (error) {
-      console.error('Error generating app:', error);
+      console.error('Error processing message:', error);
+      
+      // Add error message
       setMessages((prev) => [
         ...prev, 
         { 
           role: 'assistant', 
-          content: 'Sorry, I encountered an error while creating your app. Please try again.' 
+          content: 'Sorry, I encountered an error. Please try again.' 
         }
       ]);
     } finally {
@@ -95,433 +169,93 @@ const AIChat: React.FC = () => {
     }
   };
   
-  // Helper functions for app creation
-  const getAppIcon = (type: string): string => {
-    switch (type) {
-      case 'weather':
-        return '🌤️';
-      case 'latex-generator':
-        return '📝';
-      case 'url-launcher':
-        return '🔗';
-      default:
-        return '📱';
-    }
+  // Handle viewing app library
+  const handleViewLibrary = () => {
+    setCurrentScreen('appMenu');
+    toggleChat();
   };
   
-  const getAppCode = (type: string): string => {
-    switch (type) {
-      case 'url-launcher':
-        return `
-          function UrlLauncher({ config }) {
-            const [url, setUrl] = React.useState(config.url || '');
-            const [error, setError] = React.useState('');
-            
-            const handleLaunch = () => {
-              try {
-                if (url) {
-                  // Format URL properly
-                  const formattedUrl = url.startsWith('http') ? url : \`https://\${url}\`;
-                  // Use window.open directly
-                  window.open(formattedUrl, '_blank');
-                }
-              } catch (err) {
-                setError('Failed to open URL. Please try again.');
-                console.error(err);
-              }
-            };
-            
-            return (
-              <div className="h-full flex flex-col p-3 bg-white text-gray-800">
-                <h3 className="text-sm font-medium mb-2">URL Launcher</h3>
-                
-                <div className="flex-1 flex flex-col">
-                  <div className="mb-3">
-                    <div className="flex items-center gap-1">
-                      <div className="relative flex-1">
-                        <input
-                          type="text"
-                          value={url}
-                          onChange={(e) => setUrl(e.target.value)}
-                          placeholder="Enter URL"
-                          className="w-full p-2 pr-8 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-                          onKeyDown={(e) => e.key === 'Enter' && handleLaunch()}
-                        />
-                        <button
-                          onClick={handleLaunch}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-500 transition-colors"
-                          title="Launch URL"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                            <polyline points="15 3 21 3 21 9"></polyline>
-                            <line x1="10" y1="14" x2="21" y2="3"></line>
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {error && (
-                    <div className="mb-2 p-2 bg-red-100 text-red-600 text-xs rounded-md">
-                      {error}
-                    </div>
-                  )}
-                  
-                  <div className="mt-auto text-center text-xs text-gray-500">
-                    Enter a URL and press Enter or click the launch icon
-                  </div>
-                </div>
-              </div>
-            );
-          }
-        `;
-        
-      case 'weather':
-        return `
-          function Weather({ config }) {
-            const [city, setCity] = React.useState(config.city || 'New York');
-            const [weather, setWeather] = React.useState(null);
-            const [loading, setLoading] = React.useState(false);
-            const [error, setError] = React.useState('');
-            
-            // Simulate fetching weather data
-            const fetchWeather = React.useCallback(() => {
-              setLoading(true);
-              setError('');
-              
-              // Simulate API call
-              setTimeout(() => {
-                try {
-                  // Generate random weather data for demo
-                  const temp = Math.floor(Math.random() * 30) + 10; // 10-40°C
-                  const conditions = ['Sunny', 'Cloudy', 'Rainy', 'Partly Cloudy', 'Stormy'][Math.floor(Math.random() * 5)];
-                  const humidity = Math.floor(Math.random() * 50) + 30; // 30-80%
-                  const windSpeed = Math.floor(Math.random() * 20) + 5; // 5-25 km/h
-                  
-                  setWeather({
-                    city,
-                    temp,
-                    conditions,
-                    humidity,
-                    windSpeed,
-                    date: new Date().toLocaleDateString()
-                  });
-                  setLoading(false);
-                } catch (err) {
-                  setError('Failed to fetch weather data');
-                  setLoading(false);
-                }
-              }, [city]);
-            
-            // Fetch weather on mount and when city changes
-            React.useEffect(() => {
-              fetchWeather();
-            }, [fetchWeather]);
-            
-            const handleSubmit = (e) => {
-              e.preventDefault();
-              fetchWeather();
-            };
-            
-            const getWeatherIcon = (condition) => {
-              switch(condition) {
-                case 'Sunny': return '☀️';
-                case 'Cloudy': return '☁️';
-                case 'Rainy': return '🌧️';
-                case 'Partly Cloudy': return '⛅';
-                case 'Stormy': return '⛈️';
-                default: return '🌤️';
-              }
-            };
-            
-            return (
-              <div className="h-full flex flex-col p-3 bg-white text-gray-800">
-                <h3 className="text-sm font-medium mb-2">Weather</h3>
-                
-                <form onSubmit={handleSubmit} className="mb-3">
-                  <div className="flex gap-1">
-                    <input
-                      type="text"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                      placeholder="Enter city"
-                      className="flex-1 p-2 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-                    />
-                    <button
-                      type="submit"
-                      disabled={loading || !city.trim()}
-                      className="p-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50"
-                    >
-                      {loading ? '...' : 'Go'}
-                    </button>
-                  </div>
-                </form>
-                
-                {error && (
-                  <div className="mb-3 p-2 bg-red-100 text-red-600 text-xs rounded-md">
-                    {error}
-                  </div>
-                )}
-                
-                {weather && !loading && (
-                  <div className="flex-1 flex flex-col items-center justify-center bg-blue-50 rounded-md p-3">
-                    <div className="text-4xl mb-1">{getWeatherIcon(weather.conditions)}</div>
-                    <h4 className="text-lg font-medium text-gray-800">{weather.city}</h4>
-                    <p className="text-xs text-gray-500 mb-3">{weather.date}</p>
-                    
-                    <div className="text-2xl font-bold text-blue-600 mb-2">
-                      {weather.temp}°C
-                    </div>
-                    
-                    <p className="text-sm text-gray-700 mb-2">{weather.conditions}</p>
-                    
-                    <div className="w-full grid grid-cols-2 gap-2 mt-1">
-                      <div className="bg-white p-2 rounded-md text-center shadow-sm">
-                        <p className="text-xs text-gray-500">Humidity</p>
-                        <p className="font-medium text-sm">{weather.humidity}%</p>
-                      </div>
-                      <div className="bg-white p-2 rounded-md text-center shadow-sm">
-                        <p className="text-xs text-gray-500">Wind</p>
-                        <p className="font-medium text-sm">{weather.windSpeed} km/h</p>
-                      </div>
-                    </div>
-                    
-                    <button
-                      onClick={fetchWeather}
-                      className="mt-3 p-1.5 w-full bg-gray-100 text-xs text-gray-600 rounded-md hover:bg-gray-200 transition-colors"
-                    >
-                      Refresh
-                    </button>
-                  </div>
-                )}
-                
-                {loading && (
-                  <div className="flex-1 flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
-                  </div>
-                )}
-              </div>
-            );
-          }
-        `;
-        
-      case 'latex-generator':
-        return `
-          function LatexGenerator({ config }) {
-            const [input, setInput] = React.useState('');
-            const [latex, setLatex] = React.useState('');
-            const [loading, setLoading] = React.useState(false);
-            const [error, setError] = React.useState('');
-            
-            // Function to generate LaTeX from input
-            const generateLatex = () => {
-              if (!input.trim()) return;
-              
-              setLoading(true);
-              setError('');
-              
-              // Simulate API call
-              setTimeout(() => {
-                try {
-                  // Simple conversion for demo purposes
-                  let result = input;
-                  
-                  // Replace common patterns with LaTeX equivalents
-                  result = result.replace(/\\^2/g, '^{2}');
-                  result = result.replace(/sqrt\\(([^)]+)\\)/g, '\\\\sqrt{$1}');
-                  result = result.replace(/([a-z])\\^([a-z0-9])/gi, '$1^{$2}');
-                  result = result.replace(/([a-z])\\_([a-z0-9])/gi, '$1_{$2}');
-                  result = result.replace(/sum from (.*?) to (.*?) of (.*)/i, '\\\\sum_{$1}^{$2} $3');
-                  result = result.replace(/integral from (.*?) to (.*?) of (.*)/i, '\\\\int_{$1}^{$2} $3');
-                  
-                  // Add LaTeX formatting
-                  result = '$' + result + '$';
-                  
-                  setLatex(result);
-                  setLoading(false);
-                } catch (err) {
-                  setError('Failed to generate LaTeX');
-                  setLoading(false);
-                }
-              }, 1000);
-            };
-            
-            const handleSubmit = (e) => {
-              e.preventDefault();
-              generateLatex();
-            };
-            
-            const examples = [
-              'E = mc^2',
-              'f(x) = x^2 + 2x + 1',
-              'sqrt(x^2 + y^2)',
-              'sum from i=1 to n of i^2'
-            ];
-            
-            return (
-              <div className="h-full flex flex-col p-3 bg-white text-gray-800">
-                <h3 className="text-sm font-medium mb-2">LaTeX Generator</h3>
-                
-                <form onSubmit={handleSubmit} className="mb-2">
-                  <div className="mb-2">
-                    <textarea
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
-                      placeholder="Enter mathematical expression"
-                      className="w-full p-2 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-300 min-h-[60px]"
-                    />
-                  </div>
-                  
-                  <button
-                    type="submit"
-                    disabled={loading || !input.trim()}
-                    className="w-full p-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50"
-                  >
-                    {loading ? 'Generating...' : 'Generate LaTeX'}
-                  </button>
-                </form>
-                
-                <div className="mb-3">
-                  <div className="text-xs text-gray-500 mb-1.5">
-                    Examples:
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {examples.map((example) => (
-                      <button
-                        key={example}
-                        type="button"
-                        onClick={() => setInput(example)}
-                        className="p-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
-                      >
-                        {example}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                
-                {error && (
-                  <div className="mb-2 p-2 bg-red-100 text-red-600 text-xs rounded-md">
-                    {error}
-                  </div>
-                )}
-                
-                {latex && (
-                  <div className="mt-auto">
-                    <div className="text-xs text-gray-500 mb-1.5">Generated LaTeX:</div>
-                    <pre className="bg-gray-50 p-2 rounded-md overflow-x-auto text-xs text-gray-800 border border-gray-200">
-                      {latex}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            );
-          }
-        `;
-        
-      default:
-        return `
-          function DefaultApp({ config }) {
-            return (
-              <div className="h-full flex flex-col items-center justify-center p-4 bg-gradient-to-br from-slate-50 to-blue-50">
-                <div className="text-4xl mb-4">👋</div>
-                <h3 className="text-xl font-medium text-slate-800 mb-2">Hello World!</h3>
-                <p className="text-slate-600 text-center max-w-xs">
-                  This is a default app. You can customize it or create a new one using the App Creator.
-                </p>
-                <div className="mt-6 p-3 bg-white rounded-lg border border-slate-200 shadow-sm w-full max-w-xs">
-                  <div className="text-xs font-medium text-slate-500 mb-2">App Info</div>
-                  <div className="text-sm text-slate-700">
-                    <div className="flex justify-between py-1 border-b border-slate-100">
-                      <span>Type:</span>
-                      <span className="font-medium">Default</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-slate-100">
-                      <span>Created:</span>
-                      <span className="font-medium">${new Date().toLocaleDateString()}</span>
-                    </div>
-                    <div className="flex justify-between py-1">
-                      <span>Status:</span>
-                      <span className="text-green-600 font-medium">Active</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          }
-        `;
+  // Handle opening settings - navigate to settings page
+  const handleOpenSettings = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Stop event propagation
+    
+    // Close chat
+    toggleChat();
+    
+    // Navigate to settings page
+    window.location.href = '/settings';
+  };
+
+  const handleAddDefaultApp = (appId: string) => {
+    const app = defaultApps.find(app => app.id === appId);
+    if (app) {
+      addMicroApp(app);
+      addWidget({
+        id: `widget-${app.id}`,
+        appId: app.id,
+        name: app.name,
+        size: 'medium', // or 'small'/'large' based on your preference
+        position: { x: 0, y: 0 } // Initial position
+      });
+      setCurrentScreen('dashboard');
+      toggleChat(); // Close chat after adding the app
     }
   };
-  
-  const getAppConfig = (type: string, input: string): Record<string, any> => {
-    switch (type) {
-      case 'url-launcher':
-        // Try to extract a URL from the input
-        const urlMatch = input.match(/https?:\/\/[^\s]+/);
-        return {
-          url: urlMatch ? urlMatch[0] : 'https://example.com'
-        };
-        
-      case 'weather':
-        // Try to extract a city from the input
-        const cityMatch = input.match(/weather\s+(?:for|in)\s+([a-zA-Z\s]+)/i);
-        return {
-          city: cityMatch ? cityMatch[1].trim() : 'New York'
-        };
-        
-      default:
-        return {};
-    }
-  };
-  
+
   return (
     <AnimatePresence>
       {isChatOpen && (
         <motion.div
-          className="fixed right-0 top-0 bottom-0 w-[400px] bg-card border-l border-border shadow-xl flex flex-col z-50"
-          initial={{ x: 400 }}
-          animate={{ x: 0 }}
-          exit={{ x: 400 }}
-          transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+          initial={{ opacity: 0, y: 20, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 20, scale: 0.95 }}
+          transition={{ duration: 0.2 }}
+          className="fixed bottom-20 right-4 w-80 sm:w-96 h-[500px] max-h-[80vh] bg-card border border-border rounded-xl shadow-lg overflow-hidden flex flex-col z-50"
         >
           {/* Chat header */}
-          <div className="p-4 border-b flex items-center justify-between bg-accent/50 backdrop-blur-sm">
+          <div className="p-3 border-b bg-card flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="bg-primary/10 p-1.5 rounded-full">
-                <Sparkles className="h-5 w-5 text-primary" />
+                <Sparkles className="h-4 w-4 text-primary" />
               </div>
-              <h2 className="text-lg font-medium text-foreground">App Creator</h2>
+              <h3 className="font-medium text-sm">AI App Generator</h3>
             </div>
-            <button 
-              onClick={toggleChat}
-              className="p-1.5 rounded-full hover:bg-background/80 transition-colors"
-              aria-label="Close chat"
-            >
-              <X size={18} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleOpenSettings}
+                className="p-2 rounded-md hover:bg-muted transition-colors"
+                aria-label="Open settings"
+              >
+                <SettingsIcon size={16} />
+              </button>
+              <button
+                onClick={toggleChat}
+                className="p-2 rounded-md hover:bg-muted transition-colors"
+                aria-label="Close chat"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
           
           {/* Chat messages */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.map((message, index) => (
-              <motion.div 
+              <motion.div
                 key={index}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                transition={{ duration: 0.2 }}
+                className={`flex ${
+                  message.role === 'user' ? 'justify-end' : 'justify-start'
+                }`}
               >
-                <div className={`flex items-start gap-2 max-w-[85%] ${message.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                  <div className={`flex-shrink-0 rounded-full p-1.5 ${
-                    message.role === 'user' 
-                      ? 'bg-primary/10' 
-                      : 'bg-secondary'
-                  }`}>
-                    {message.role === 'user' 
-                      ? <User size={16} className="text-primary" /> 
-                      : <Bot size={16} className="text-primary" />
-                    }
-                  </div>
+                <div className="flex items-start gap-2 max-w-[85%]">
+                  {message.role === 'assistant' && (
+                    <div className="bg-primary/10 p-1.5 rounded-full h-8 w-8 flex items-center justify-center mt-1">
+                      <Bot size={16} className="text-primary" />
+                    </div>
+                  )}
                   <div 
                     className={`rounded-2xl p-3 ${
                       message.role === 'user' 
@@ -530,41 +264,95 @@ const AIChat: React.FC = () => {
                     }`}
                   >
                     {message.content}
+                    
+                    {/* Show loading indicator for app generation */}
+                    {index === messages.length - 1 && 
+                     message.role === 'assistant' && 
+                     isGeneratingApp && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary"></div>
+                        <span className="text-xs text-muted-foreground">Generating app...</span>
+                      </div>
+                    )}
+                    
+                    {/* Show view library button after app generation */}
+                    {index === messages.length - 1 && 
+                     message.role === 'assistant' && 
+                     message.content.includes('added it to your app library') && (
+                      <button
+                        onClick={handleViewLibrary}
+                        className="mt-2 px-3 py-1.5 bg-primary/10 text-primary text-xs rounded-md hover:bg-primary/20 transition-colors"
+                      >
+                        View App Library
+                      </button>
+                    )}
+                    
+                    {/* Show settings button for API key messages */}
+                    {index === messages.length - 1 && 
+                     message.role === 'assistant' && 
+                     message.content.includes('Would you like to open settings') && (
+                      <button
+                        onClick={handleOpenSettings}
+                        className="mt-2 px-3 py-1.5 bg-primary/10 text-primary text-xs rounded-md hover:bg-primary/20 transition-colors"
+                      >
+                        Open Settings
+                      </button>
+                    )}
                   </div>
+                  {message.role === 'user' && (
+                    <div className="bg-primary p-1.5 rounded-full h-8 w-8 flex items-center justify-center mt-1">
+                      <User size={16} className="text-primary-foreground" />
+                    </div>
+                  )}
                 </div>
               </motion.div>
             ))}
             <div ref={messagesEndRef} />
           </div>
           
-          {/* Chat input */}
+          {/* Suggested prompts */}
           <div className="p-4 border-t bg-card">
-            <div className="flex items-center gap-2 bg-background rounded-full border border-border p-1 pl-4 focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary/50">
+            <h4 className="text-sm font-medium mb-2">Try these default apps:</h4>
+            <div className="flex flex-wrap gap-2">
+              {defaultApps.map(app => (
+                <Button key={app.id} onClick={() => handleAddDefaultApp(app.id)} className="text-xs bg-muted hover:bg-muted/80 transition-colors">
+                  {app.name}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* Chat input */}
+          <div className="p-3 border-t bg-card">
+            <div className="flex items-center gap-2">
               <input
                 ref={inputRef}
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                placeholder="Ask me to create an app..."
+                className="flex-1 p-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-primary"
                 onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                placeholder="Describe the app you want..."
-                className="flex-1 bg-transparent border-none focus:outline-none text-sm"
                 disabled={isLoading}
               />
               <Button
                 onClick={handleSendMessage}
-                disabled={isLoading || !input.trim()}
-                className="p-2 h-9 w-9 rounded-full"
+                disabled={!input.trim() || isLoading}
                 size="icon"
+                className="h-8 w-8"
                 aria-label="Send message"
               >
-                {isLoading ? 
-                  <Loader2 className="animate-spin" size={18} /> : 
-                  <Send size={18} />
-                }
+                {isLoading ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Send size={16} />
+                )}
               </Button>
             </div>
             <div className="mt-2 text-xs text-muted-foreground text-center">
-              Try asking for a "weather app for New York" or "URL launcher"
+              {hasApiKey() 
+                ? 'Try: "Create a weather widget for New York" or "Make a calculator"'
+                : 'Try: "Create a weather widget" or add your OpenAI API key for custom apps'}
             </div>
           </div>
         </motion.div>
