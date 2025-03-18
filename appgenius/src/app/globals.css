@@ -10,6 +10,7 @@
 
 @layer base {
   :root, :host, ::backdrop {
+    /* Dark mode colors */
     --background: 23 23 23;  /* zinc-900 */
     --foreground: 250 250 250;  /* zinc-50 */
     
