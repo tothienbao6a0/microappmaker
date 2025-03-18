@@ -12,8 +12,9 @@ export interface MicroApp {
   description: string;
   icon: string; // URL or emoji
   code: string;
-  config?: Record<string, any>;
-  createdAt: number;
+  config: Record<string, any>;
+  createdAt: Date;
+  size?: { w: number; h: number };
 }
 
 export interface Widget {
